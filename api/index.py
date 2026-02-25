@@ -2,11 +2,11 @@ from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 import csv
 import io
-import json
+import os
 
 app = FastAPI()
 
-# --- DATABASE TẠM THỜI (Sẽ reset khi Vercel restart) ---
+# --- DATABASE TẠM THỜI ---
 db = {
     "items": [
         {"id": 1, "name": "Nguyễn Văn A", "phone": "0901234567", "company": "Tech ABC", "consultant": "Admin", "referrer": "", "tags": "Hot", "status": "Có SĐT", "type": "lead"},
@@ -15,7 +15,6 @@ db = {
     "counter": 3
 }
 
-# --- GIAO DIỆN UI (Tailwind CSS) ---
 def get_html(content):
     return f"""
     <html>
@@ -67,14 +66,10 @@ async def home():
 
     <dialog id="addModal" class="p-6 rounded-lg shadow-xl w-[450px]">
         <form action="/add" method="post" class="space-y-4">
-            <h3 class="text-xl font-bold border-b pb-2">Thêm Khách Hàng</h3>
-            <div class="grid grid-cols-2 gap-2">
-                <input name="name" placeholder="Tên" class="border p-2 rounded w-full" required>
-                <input name="phone" placeholder="SĐT" class="border p-2 rounded w-full">
-            </div>
+            <h3 class="text-xl font-bold border-b pb-2 text-gray-800">Thêm Khách Hàng</h3>
+            <input name="name" placeholder="Tên" class="border p-2 rounded w-full" required>
+            <input name="phone" placeholder="SĐT" class="border p-2 rounded w-full">
             <input name="company" placeholder="Công ty" class="border p-2 rounded w-full">
-            <input name="consultant" placeholder="Người tư vấn" class="border p-2 rounded w-full">
-            <input name="tags" placeholder="Tags" class="border p-2 rounded w-full">
             <div class="flex justify-end space-x-2 pt-4">
                 <button type="button" onclick="this.closest('dialog').close()" class="bg-gray-300 px-4 py-2 rounded">Hủy</button>
                 <button type="submit" class="bg-[#00A09D] text-white px-4 py-2 rounded">Lưu</button>
@@ -96,10 +91,10 @@ def render_card(i):
         <p class="text-sm text-gray-600">{i['phone'] or 'Chưa có SĐT'}</p>
         <p class="text-xs text-gray-400 italic">{i['company'] or 'N/A'}</p>
         <div class="mt-3 flex justify-between items-center border-t pt-2">
-            <span class="text-[10px] bg-gray-100 px-2 py-1 rounded">{i['status']}</span>
+            <span class="text-[10px] bg-gray-100 px-2 py-1 rounded font-bold uppercase">{i['status']}</span>
             <div class="space-x-2">
-                {f'<a href="/convert/{i["id"]}" class="text-xs text-blue-500 font-bold">Chuyển Oppo</a>' if i['type']=='lead' else ''}
-                <button onclick="window.location.href='/edit-view/{i['id']}'" class="text-xs bg-gray-200 px-2 py-1 rounded">Sửa</button>
+                {f'<a href="/convert/{i["id"]}" class="text-xs text-blue-500 font-bold hover:underline">Chuyển Oppo</a>' if i['type']=='lead' else ''}
+                <a href="/edit-view/{i['id']}" class="text-xs bg-gray-200 px-2 py-1 rounded hover:bg-gray-300 transition">Sửa</a>
             </div>
         </div>
     </div>
@@ -111,20 +106,27 @@ async def edit_view(id: int):
     if not item: return RedirectResponse("/")
     
     content = f"""
-    <div class="max-w-md mx-auto bg-white p-8 rounded-xl shadow-lg">
+    <div class="max-w-md mx-auto bg-white p-8 rounded-xl shadow-lg mt-10">
         <h2 class="text-2xl font-bold mb-6 text-[#714B67]">Chỉnh sửa Thông tin</h2>
         <form action="/update/{id}" method="post" class="space-y-4">
             <div><label class="text-xs font-bold text-gray-500 uppercase">Tên</label>
-            <input name="name" value="{item['name']}" class="w-full border-b p-2 focus:outline-none focus:border-[#714B67]"></div>
+            <input name="name" value="{item['name']}" class="w-full border-b p-2 focus:outline-none focus:border-[#714B67]" required></div>
             <div><label class="text-xs font-bold text-gray-500 uppercase">SĐT</label>
-            <input name="phone" value="{item['phone']}" class="w-full border-b p-2 focus:outline-none focus:border-[#714B67]"></div>
+            <input name="phone" value="{item['phone'] or ''}" class="w-full border-b p-2 focus:outline-none focus:border-[#714B67]"></div>
             <div><label class="text-xs font-bold text-gray-500 uppercase">Công ty</label>
-            <input name="company" value="{item['company']}" class="w-full border-b p-2 focus:outline-none focus:border-[#714B67]"></div>
+            <input name="company" value="{item['company'] or ''}" class="w-full border-b p-2 focus:outline-none focus:border-[#714B67]"></div>
             <div><label class="text-xs font-bold text-gray-500 uppercase">Trạng thái</label>
-            <input name="status" value="{item['status']}" class="w-full border-b p-2 focus:outline-none focus:border-[#714B67]"></div>
+            <select name="status" class="w-full border-b p-2 focus:outline-none">
+                <option value="Có SĐT" {"selected" if item['status'] == 'Có SĐT' else ''}>Có SĐT</option>
+                <option value="Có Zalo" {"selected" if item['status'] == 'Có Zalo' else ''}>Có Zalo</option>
+                <option value="Đã tư vấn" {"selected" if item['status'] == 'Đã tư vấn' else ''}>Đã tư vấn</option>
+                <option value="Có CCCD" {"selected" if item['status'] == 'Có CCCD' else ''}>Có CCCD</option>
+                <option value="Đã PV" {"selected" if item['status'] == 'Đã PV' else ''}>Đã PV</option>
+                <option value="Đã Đi Làm" {"selected" if item['status'] == 'Đã Đi Làm' else ''}>Đã Đi Làm</option>
+            </select></div>
             <div class="flex justify-between pt-6">
-                <a href="/" class="text-gray-500 py-2">Quay lại</a>
-                <button type="submit" class="bg-[#714B67] text-white px-8 py-2 rounded-full">Cập nhật</button>
+                <a href="/" class="text-gray-500 py-2 hover:underline">Quay lại</a>
+                <button type="submit" class="bg-[#714B67] text-white px-8 py-2 rounded-full hover:bg-[#5d3d55]">Cập nhật</button>
             </div>
         </form>
     </div>
@@ -134,16 +136,19 @@ async def edit_view(id: int):
 # --- XỬ LÝ DỮ LIỆU ---
 
 @app.post("/add")
-async def add(name: str=Form(...), phone: str=Form(...), company: str=Form(""), consultant: str=Form(""), tags: str=Form("")):
-    db["items"].append({{"id": db["counter"], "name": name, "phone": phone, "company": company, "consultant": consultant, "tags": tags, "status": "Có SĐT", "type": "lead"}})
+async def add(name: str=Form(...), phone: str=Form(""), company: str=Form("")):
+    db["items"].append({
+        "id": db["counter"], "name": name, "phone": phone, "company": company, 
+        "consultant": "Admin", "tags": "", "status": "Có SĐT", "type": "lead"
+    })
     db["counter"] += 1
     return RedirectResponse("/", status_code=303)
 
 @app.post("/update/{{id}}")
-async def update(id: int, name: str=Form(...), phone: str=Form(...), company: str=Form(""), status: str=Form("")):
+async def update(id: int, name: str=Form(...), phone: str=Form(""), company: str=Form(""), status: str=Form("")):
     for i in db["items"]:
         if i["id"] == id:
-            i.update({{"name": name, "phone": phone, "company": company, "status": status}})
+            i.update({"name": name, "phone": phone, "company": company, "status": status})
             break
     return RedirectResponse("/", status_code=303)
 
@@ -167,17 +172,23 @@ def export_csv():
     cw.writerow(["ID", "Name", "Phone", "Company", "Status", "Type"])
     for i in db["items"]:
         cw.writerow([i["id"], i["name"], i["phone"], i["company"], i["status"], i["type"]])
-    return Response(content=si.getvalue(), media_type="text/csv", headers={{"Content-Disposition": "attachment; filename=crm_export.csv"}})
+    return Response(
+        content=si.getvalue(), 
+        media_type="text/csv", 
+        headers={"Content-Disposition": "attachment; filename=crm_export.csv"}
+    )
 
 @app.post("/import")
 async def import_csv(file: UploadFile = File(...)):
     content = await file.read()
     decoded = content.decode('utf-8').splitlines()
     reader = csv.reader(decoded)
-    next(reader) # Bỏ header
+    next(reader, None) # Bỏ header an toàn
     for row in reader:
         if len(row) >= 3:
-            db["items"].append({{"id": db["counter"], "name": row[0], "phone": row[1], "company": row[2], "consultant": "Imported", "tags": "", "status": "Có SĐT", "type": "lead"}})
+            db["items"].append({
+                "id": db["counter"], "name": row[0], "phone": row[1], "company": row[2], 
+                "consultant": "Imported", "tags": "", "status": "Có SĐT", "type": "lead"
+            })
             db["counter"] += 1
     return RedirectResponse("/", status_code=303)
-     
