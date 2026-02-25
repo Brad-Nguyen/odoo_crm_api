@@ -1,29 +1,22 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request
+from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from pydantic import BaseModel
-from typing import List, Optional
 import csv
 import io
 import json
 
 app = FastAPI()
 
-# --- DATABASE TẠM THỜI (Trong thực tế bạn nên kết nối Supabase/PostgreSQL) ---
-# Dữ liệu mẫu ban đầu
+# --- DATABASE TẠM THỜI (Sẽ reset khi Vercel restart) ---
 db = {
-    "leads": [
+    "items": [
         {"id": 1, "name": "Nguyễn Văn A", "phone": "0901234567", "company": "Tech ABC", "consultant": "Admin", "referrer": "", "tags": "Hot", "status": "Có SĐT", "type": "lead"},
         {"id": 2, "name": "Trần Thị B", "phone": "0911222333", "company": "Global Corp", "consultant": "Sale 01", "referrer": "Nguyễn Văn A", "tags": "VIP", "status": "Đã PV", "type": "opportunity"}
     ],
     "counter": 3
 }
 
-# --- CẤU HÌNH STATUS ---
-LEAD_STATUS = ["Có SĐT", "Có Zalo", "Đã tư vấn"]
-OPPO_STATUS = ["Có CCCD", "Có lịch PV", "Đã PV", "Đã Đi Làm"]
-
-# --- GIAO DIỆN (HTML & TAILWIND CSS) ---
-def get_html_template(content):
+# --- GIAO DIỆN UI (Tailwind CSS) ---
+def get_html(content):
     return f"""
     <html>
         <head>
@@ -31,14 +24,19 @@ def get_html_template(content):
             <script src="https://cdn.tailwindcss.com"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
         </head>
-        <body class="bg-gray-100 font-sans">
-            <nav class="bg-[#714B67] text-white p-3 shadow-md flex justify-between items-center">
-                <div class="flex space-x-6 items-center">
-                    <span class="font-bold text-xl ml-4">CRM Beta</span>
+        <body class="bg-gray-100 min-h-screen">
+            <nav class="bg-[#714B67] text-white p-3 flex justify-between items-center shadow-md">
+                <div class="flex items-center space-x-6">
+                    <span class="font-bold text-xl ml-4">CRM Manager</span>
                     <a href="/" class="hover:bg-[#5d3d55] px-3 py-1 rounded">Dashboard</a>
-                    <a href="/export" class="hover:bg-[#5d3d55] px-3 py-1 rounded">Export</a>
                 </div>
-                <div class="mr-4"><i class="fas fa-user-circle text-2xl"></i></div>
+                <div class="flex space-x-4 mr-4">
+                    <form action="/import" method="post" enctype="multipart/form-data" class="flex items-center bg-white/10 p-1 rounded">
+                        <input type="file" name="file" class="text-xs w-40" required>
+                        <button type="submit" class="bg-blue-500 text-[10px] px-2 py-1 rounded">Import CSV</button>
+                    </form>
+                    <a href="/export" class="bg-green-600 px-4 py-1 rounded text-sm hover:bg-green-700"><i class="fas fa-download"></i> Export</a>
+                </div>
             </nav>
             <div class="p-6">{content}</div>
         </body>
@@ -46,109 +44,139 @@ def get_html_template(content):
     """
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard():
-    leads = [item for item in db["leads"] if item["type"] == "lead"]
-    oppos = [item for item in db["leads"] if item["type"] == "opportunity"]
+async def home():
+    leads = [i for i in db["items"] if i["type"] == "lead"]
+    oppos = [i for i in db["items"] if i["type"] == "opportunity"]
     
-    html_content = f"""
-    <div class="flex justify-between items-center mb-6">
-        <h2 class="text-2xl font-semibold text-gray-700">Quản lý Khách hàng</h2>
-        <button onclick="document.getElementById('addModal').showModal()" class="bg-[#00A09D] text-white px-4 py-2 rounded shadow hover:bg-[#008a87]">+ Tạo mới Lead</button>
+    content = f"""
+    <div class="flex justify-between mb-6">
+        <h2 class="text-2xl font-bold text-gray-700">Pipeline Quản lý</h2>
+        <button onclick="document.getElementById('addModal').showModal()" class="bg-[#00A09D] text-white px-6 py-2 rounded shadow">+ Tạo Lead</button>
     </div>
 
     <div class="grid grid-cols-2 gap-8">
         <div class="bg-gray-200 p-4 rounded-lg">
-            <h3 class="font-bold text-[#714B67] mb-4 uppercase flex justify-between">
-                <span><i class="fas fa-filter"></i> Leads (Tiềm năng)</span>
-                <span class="bg-gray-400 text-white px-2 rounded-full text-sm">{len(leads)}</span>
-            </h3>
-            <div class="space-y-3">
-                {"".join([card_template(item) for item in leads])}
-            </div>
+            <h3 class="font-bold mb-4 text-[#714B67] uppercase">Leads ({len(leads)})</h3>
+            <div class="space-y-3">{"".join([render_card(i) for i in leads])}</div>
         </div>
-
         <div class="bg-blue-50 p-4 rounded-lg border-l-4 border-blue-400">
-            <h3 class="font-bold text-blue-700 mb-4 uppercase flex justify-between">
-                <span><i class="fas fa-trophy"></i> Opportunities (Cơ hội)</span>
-                <span class="bg-blue-400 text-white px-2 rounded-full text-sm">{len(oppos)}</span>
-            </h3>
-            <div class="space-y-3">
-                {"".join([card_template(item) for item in oppos])}
-            </div>
+            <h3 class="font-bold mb-4 text-blue-700 uppercase">Opportunities ({len(oppos)})</h3>
+            <div class="space-y-3">{"".join([render_card(i) for i in oppos])}</div>
         </div>
     </div>
 
-    <dialog id="addModal" class="p-6 rounded-lg shadow-2xl w-96">
+    <dialog id="addModal" class="p-6 rounded-lg shadow-xl w-[450px]">
         <form action="/add" method="post" class="space-y-4">
-            <h3 class="text-xl font-bold border-b pb-2">Thêm Lead mới</h3>
-            <input name="name" placeholder="Tên khách hàng" class="w-full border p-2 rounded" required>
-            <input name="phone" placeholder="Số điện thoại" class="w-full border p-2 rounded" required>
-            <input name="company" placeholder="Công ty" class="w-full border p-2 rounded">
-            <input name="consultant" placeholder="Người tư vấn" class="w-full border p-2 rounded">
-            <select name="referrer" class="w-full border p-2 rounded">
-                <option value="">-- Chọn Người giới thiệu --</option>
-                {"".join([f'<option value="{l["name"]}">{l["name"]}</option>' for l in db["leads"]])}
-            </select>
-            <input name="tags" placeholder="Tags (cách nhau bởi dấu phẩy)" class="w-full border p-2 rounded">
-            <div class="flex justify-end space-x-2">
+            <h3 class="text-xl font-bold border-b pb-2">Thêm Khách Hàng</h3>
+            <div class="grid grid-cols-2 gap-2">
+                <input name="name" placeholder="Tên" class="border p-2 rounded w-full" required>
+                <input name="phone" placeholder="SĐT" class="border p-2 rounded w-full">
+            </div>
+            <input name="company" placeholder="Công ty" class="border p-2 rounded w-full">
+            <input name="consultant" placeholder="Người tư vấn" class="border p-2 rounded w-full">
+            <input name="tags" placeholder="Tags" class="border p-2 rounded w-full">
+            <div class="flex justify-end space-x-2 pt-4">
                 <button type="button" onclick="this.closest('dialog').close()" class="bg-gray-300 px-4 py-2 rounded">Hủy</button>
-                <button type="submit" class="bg-[#00A09D] text-white px-4 py-2 rounded">Lưu Lead</button>
+                <button type="submit" class="bg-[#00A09D] text-white px-4 py-2 rounded">Lưu</button>
             </div>
         </form>
     </dialog>
     """
-    return get_html_template(html_content)
+    return get_html(content)
 
-def card_template(item):
-    btn_convert = ""
-    if item["type"] == "lead":
-        btn_convert = f'<a href="/convert/{item["id"]}" class="text-xs text-blue-600 font-bold hover:underline">Chuyển thành Oppo</a>'
-    
-    status_color = "bg-green-100 text-green-800" if item["type"] == "lead" else "bg-purple-100 text-purple-800"
-    
+def render_card(i):
     return f"""
-    <div class="bg-white p-4 rounded shadow-sm border-l-4 border-[#714B67] hover:shadow-md transition">
+    <div class="bg-white p-4 rounded shadow hover:shadow-md transition group">
         <div class="flex justify-between items-start">
-            <h4 class="font-bold text-gray-800">{item['name']}</h4>
-            <span class="text-[10px] px-2 py-0.5 rounded-full {status_color}">{item['status']}</span>
+            <h4 class="font-bold text-gray-800">{i['name']}</h4>
+            <div class="flex space-x-2 opacity-0 group-hover:opacity-100 transition">
+                <a href="/delete/{i['id']}" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></a>
+            </div>
         </div>
-        <p class="text-sm text-gray-600"><i class="fas fa-phone fa-xs"></i> {item['phone']}</p>
-        <p class="text-sm text-gray-500 italic"><i class="fas fa-building fa-xs"></i> {item['company']}</p>
-        <div class="mt-2 pt-2 border-t flex justify-between items-center">
-            <span class="text-[11px] text-gray-400">TV: {item['consultant']}</span>
-            {btn_convert}
+        <p class="text-sm text-gray-600">{i['phone'] or 'Chưa có SĐT'}</p>
+        <p class="text-xs text-gray-400 italic">{i['company'] or 'N/A'}</p>
+        <div class="mt-3 flex justify-between items-center border-t pt-2">
+            <span class="text-[10px] bg-gray-100 px-2 py-1 rounded">{i['status']}</span>
+            <div class="space-x-2">
+                {f'<a href="/convert/{i["id"]}" class="text-xs text-blue-500 font-bold">Chuyển Oppo</a>' if i['type']=='lead' else ''}
+                <button onclick="window.location.href='/edit-view/{i['id']}'" class="text-xs bg-gray-200 px-2 py-1 rounded">Sửa</button>
+            </div>
         </div>
     </div>
     """
 
-# --- BACKEND LOGIC ---
+@app.get("/edit-view/{{id}}", response_class=HTMLResponse)
+async def edit_view(id: int):
+    item = next((i for i in db["items"] if i["id"] == id), None)
+    if not item: return RedirectResponse("/")
+    
+    content = f"""
+    <div class="max-w-md mx-auto bg-white p-8 rounded-xl shadow-lg">
+        <h2 class="text-2xl font-bold mb-6 text-[#714B67]">Chỉnh sửa Thông tin</h2>
+        <form action="/update/{id}" method="post" class="space-y-4">
+            <div><label class="text-xs font-bold text-gray-500 uppercase">Tên</label>
+            <input name="name" value="{item['name']}" class="w-full border-b p-2 focus:outline-none focus:border-[#714B67]"></div>
+            <div><label class="text-xs font-bold text-gray-500 uppercase">SĐT</label>
+            <input name="phone" value="{item['phone']}" class="w-full border-b p-2 focus:outline-none focus:border-[#714B67]"></div>
+            <div><label class="text-xs font-bold text-gray-500 uppercase">Công ty</label>
+            <input name="company" value="{item['company']}" class="w-full border-b p-2 focus:outline-none focus:border-[#714B67]"></div>
+            <div><label class="text-xs font-bold text-gray-500 uppercase">Trạng thái</label>
+            <input name="status" value="{item['status']}" class="w-full border-b p-2 focus:outline-none focus:border-[#714B67]"></div>
+            <div class="flex justify-between pt-6">
+                <a href="/" class="text-gray-500 py-2">Quay lại</a>
+                <button type="submit" class="bg-[#714B67] text-white px-8 py-2 rounded-full">Cập nhật</button>
+            </div>
+        </form>
+    </div>
+    """
+    return get_html(content)
+
+# --- XỬ LÝ DỮ LIỆU ---
 
 @app.post("/add")
-async def add_lead(name: str = Form(...), phone: str = Form(...), company: str = Form(""), 
-                   consultant: str = Form(""), referrer: str = Form(""), tags: str = Form("")):
-    new_id = db["counter"]
-    db["leads"].append({
-        "id": new_id, "name": name, "phone": phone, "company": company, 
-        "consultant": consultant, "referrer": referrer, "tags": tags, 
-        "status": "Có SĐT", "type": "lead"
-    })
+async def add(name: str=Form(...), phone: str=Form(...), company: str=Form(""), consultant: str=Form(""), tags: str=Form("")):
+    db["items"].append({{"id": db["counter"], "name": name, "phone": phone, "company": company, "consultant": consultant, "tags": tags, "status": "Có SĐT", "type": "lead"}})
     db["counter"] += 1
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse("/", status_code=303)
 
-@app.get("/convert/{{item_id}}")
-async def convert_to_opportunity(item_id: int):
-    for item in db["leads"]:
-        if item["id"] == item_id:
-            item["type"] = "opportunity"
-            item["status"] = "Có CCCD"
+@app.post("/update/{{id}}")
+async def update(id: int, name: str=Form(...), phone: str=Form(...), company: str=Form(""), status: str=Form("")):
+    for i in db["items"]:
+        if i["id"] == id:
+            i.update({{"name": name, "phone": phone, "company": company, "status": status}})
             break
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse("/", status_code=303)
+
+@app.get("/delete/{{id}}")
+async def delete(id: int):
+    db["items"] = [i for i in db["items"] if i["id"] != id]
+    return RedirectResponse("/", status_code=303)
+
+@app.get("/convert/{{id}}")
+async def convert(id: int):
+    for i in db["items"]:
+        if i["id"] == id:
+            i["type"], i["status"] = "opportunity", "Có CCCD"
+            break
+    return RedirectResponse("/", status_code=303)
 
 @app.get("/export")
-def export_data():
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["ID", "Tên", "SĐT", "Công ty", "Trạng thái", "Loại"])
-    for item in db["leads"]:
-        writer.writerow([item["id"], item["name"], item["phone"], item["company"], item["status"], item["type"]])
-    return Response(content=output.getvalue(), media_type="text/csv", headers={{"Content-Disposition": "attachment; filename=crm_data.csv"}})
+def export_csv():
+    si = io.StringIO()
+    cw = csv.writer(si)
+    cw.writerow(["ID", "Name", "Phone", "Company", "Status", "Type"])
+    for i in db["items"]:
+        cw.writerow([i["id"], i["name"], i["phone"], i["company"], i["status"], i["type"]])
+    return Response(content=si.getvalue(), media_type="text/csv", headers={{"Content-Disposition": "attachment; filename=crm_export.csv"}})
+
+@app.post("/import")
+async def import_csv(file: UploadFile = File(...)):
+    content = await file.read()
+    decoded = content.decode('utf-8').splitlines()
+    reader = csv.reader(decoded)
+    next(reader) # Bỏ header
+    for row in reader:
+        if len(row) >= 3:
+            db["items"].append({{"id": db["counter"], "name": row[0], "phone": row[1], "company": row[2], "consultant": "Imported", "tags": "", "status": "Có SĐT", "type": "lead"}})
+            db["counter"] += 1
+    return RedirectResponse("/", status_code=303)
