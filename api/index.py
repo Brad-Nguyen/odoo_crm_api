@@ -94,7 +94,8 @@ async def edit_view(id: str):
 
 @app.post("/add")
 async def add(name: str=Form(...), phone: str=Form(""), company: str=Form("")):
-    await collection.insert_one({{"name": name, "phone": phone, "company": company, "status": "Có SĐT", "type": "lead"}})
+    # PHẢI CÓ CHỮ await Ở ĐÂY
+    await collection.insert_one({"name": name, "phone": phone, "company": company, "status": "Có SĐT", "type": "lead"})
     return RedirectResponse("/", 303)
 
 @app.post("/update/{{id}}")

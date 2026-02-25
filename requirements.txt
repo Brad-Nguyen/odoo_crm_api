@@ -1,4 +1,5 @@
 fastapi
 motor
-pymongo
+pymongo[srv]
 python-multipart
+uvicorn
