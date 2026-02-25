@@ -1,2 +1,4 @@
 fastapi
 motor
+pymongo
+python-multipart
