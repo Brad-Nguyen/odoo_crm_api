@@ -180,3 +180,4 @@ async def import_csv(file: UploadFile = File(...)):
             db["items"].append({{"id": db["counter"], "name": row[0], "phone": row[1], "company": row[2], "consultant": "Imported", "tags": "", "status": "Có SĐT", "type": "lead"}})
             db["counter"] += 1
     return RedirectResponse("/", status_code=303)
+     
